@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Will It Rain on My Vacation?</title>
+  <meta name="description" content="Find the five best destinations and travel dates for your vacation based on expected temperature and significant rain or snow.">
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">Weather-first vacation planning</p>
+    <h1>Will It Rain on My Vacation?</h1>
+    <p>Choose a region, travel window, and trip length. We will rank your five best destination and date combinations.</p>
+  </div>
+</header>
+
+<main>
+<section class="planner panel">
+  <h2>Find My Best Vacation</h2>
+  <div class="form-grid">
+    <div class="field">
+      <label for="region">Region</label>
+      <select id="region">
+        {% for region in regions %}
+        <option value="{{ region }}">{{ region }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="destinationSearch">Specific destination <span>(optional)</span></label>
+      <div class="inline">
+        <input id="destinationSearch" placeholder="Rome, Aruba, Tokyo...">
+        <button id="searchDestination" type="button" class="secondary">Find</button>
+      </div>
+      <select id="destinationMatches" class="hidden"></select>
+    </div>
+
+    <div class="field">
+      <label for="earliestDate">Earliest departure</label>
+      <input id="earliestDate" type="date">
+    </div>
+
+    <div class="field">
+      <label for="latestReturn">Latest return</label>
+      <input id="latestReturn" type="date">
+    </div>
+
+    <div class="field">
+      <label for="tripLength">Trip length</label>
+      <select id="tripLength">
+        <option value="2">Weekend (Sat–Sun)</option>
+        <option value="3">Extended Weekend (Fri–Sun)</option>
+        <option value="4">Long Weekend (Fri–Mon)</option>
+        {% for days in range(3, 31) %}
+        <option value="{{ days }}" {% if days == 7 %}selected{% endif %}>{{ days }} days</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div id="weekendField" class="field">
+      <label for="weekendPreference">Weekend preference</label>
+      <select id="weekendPreference">
+        <option value="include">Include Weekend (Recommended)</option>
+        <option value="weekdays">Weekdays Only</option>
+        <option value="any">Doesn't Matter</option>
+      </select>
+      <small id="weekendNote">Shown for trips of five days or more.</small>
+    </div>
+
+    <div class="field">
+      <label for="priority">What matters most?</label>
+      <select id="priority">
+        <option value="overall">Best Overall</option>
+        <option value="warm">Warm Weather</option>
+        <option value="dry">Lowest Significant Rain or Snow</option>
+        <option value="beach">Beach Weather</option>
+        <option value="outdoor">Outdoor Activities</option>
+        <option value="winter">Winter Sports</option>
+      </select>
+    </div>
+  </div>
+
+  <button id="planButton" class="primary">Find My 5 Best Destinations</button>
+  <div id="loading" class="message loading hidden"></div>
+  <div id="error" class="message error hidden"></div>
+</section>
+
+<section class="map-panel panel">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Interactive map</p>
+      <h2>Explore the Recommendations</h2>
+    </div>
+    <p>Click a result to center the map and review its daily outlook.</p>
+  </div>
+  <div id="map"></div>
+</section>
+
+<section id="resultsSection" class="panel hidden">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Ranked by expected weather</p>
+      <h2>Top 5 Recommendations</h2>
+    </div>
+    <p id="resultSummary"></p>
+  </div>
+  <div id="recommendations" class="recommendations"></div>
+</section>
+
+<section id="dailySection" class="panel hidden">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Selected recommendation</p>
+      <h2 id="dailyTitle">Daily Outlook</h2>
+    </div>
+  </div>
+  <div id="dailyCards" class="daily-grid"></div>
+</section>
+</main>
+
+<footer>
+  Long-range estimates are experimental and should not replace official short-range forecasts or weather warnings.
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
