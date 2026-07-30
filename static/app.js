@@ -49,8 +49,26 @@ function clearError(){errorBox.classList.add("hidden");}
 function showError(message){errorBox.textContent=message;errorBox.classList.remove("hidden");}
 async function getJson(url, options){
   const response=await fetch(url, options);
-  const data=await response.json();
-  if(!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  const contentType=response.headers.get("content-type") || "";
+  const body=await response.text();
+  let data=null;
+
+  if(contentType.includes("application/json")){
+    try{ data=JSON.parse(body); }
+    catch{ throw new Error("The server returned damaged JSON."); }
+  }
+
+  if(!response.ok){
+    const message=data?.error ||
+      (response.status===502 || response.status===504
+        ? "The weather calculation took too long. Please try again in a minute."
+        : `Server request failed (${response.status}).`);
+    throw new Error(message);
+  }
+
+  if(!data){
+    throw new Error("The server returned an unexpected response. Please try again.");
+  }
   return data;
 }
 

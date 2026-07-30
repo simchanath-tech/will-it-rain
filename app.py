@@ -4,6 +4,7 @@ import json
 import math
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import defaultdict
@@ -117,13 +118,35 @@ REGIONS: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
-def fetch_json(url: str, timeout: int = 120) -> Any:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "WillItRainOnMyVacation/1.0"}
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8"))
+def fetch_json(url: str, timeout: int = 180) -> Any:
+    last_error: Exception | None = None
+    for attempt in range(5):
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "WillItRainOnMyVacation/1.1",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                body = response.read().decode("utf-8")
+                return json.loads(body)
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code != 429 or attempt == 4:
+                raise RuntimeError(
+                    f"Weather data service returned HTTP {exc.code}."
+                ) from exc
+            retry_after = exc.headers.get("Retry-After")
+            wait_seconds = float(retry_after) if retry_after else 2 ** attempt
+            time.sleep(min(wait_seconds, 20))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt == 4:
+                break
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"Weather data service did not respond: {last_error}")
 
 def cache_path(prefix: str, lat: float, lon: float) -> Path:
     safe = f"{lat:.4f}_{lon:.4f}".replace("-", "m").replace(".", "_")
@@ -252,6 +275,139 @@ def seasonal_range(
         }
     return result
 
+
+def _historical_from_api_data(data: dict[str, Any]) -> dict[str, dict[str, float]]:
+    daily = data.get("daily", {})
+    times = daily.get("time", [])
+    highs = daily.get("temperature_2m_max", [])
+    lows = daily.get("temperature_2m_min", [])
+    precip = daily.get("precipitation_sum", [])
+
+    grouped: dict[str, dict[str, list[float]]] = defaultdict(
+        lambda: {"high": [], "low": [], "precip": []}
+    )
+    for i, day_text in enumerate(times):
+        key = day_text[5:10]
+        high = highs[i] if i < len(highs) else None
+        low = lows[i] if i < len(lows) else None
+        amount = precip[i] if i < len(precip) else None
+        if isinstance(high, (int, float)):
+            grouped[key]["high"].append(float(high))
+        if isinstance(low, (int, float)):
+            grouped[key]["low"].append(float(low))
+        if isinstance(amount, (int, float)):
+            grouped[key]["precip"].append(float(amount))
+
+    result: dict[str, dict[str, float]] = {}
+    for key, values in grouped.items():
+        if not values["high"] or not values["low"] or not values["precip"]:
+            continue
+        result[key] = {
+            "high": sum(values["high"]) / len(values["high"]),
+            "low": sum(values["low"]) / len(values["low"]),
+            "significantPrecipProbability": (
+                sum(v >= _PRECIP_THRESHOLD_INCHES for v in values["precip"])
+                / len(values["precip"])
+                * 100
+            ),
+        }
+    return result
+
+
+def historical_daily_batch(
+    destinations: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, float]]]:
+    results: dict[str, dict[str, dict[str, float]]] = {}
+    missing: list[dict[str, Any]] = []
+
+    for destination in destinations:
+        path = cache_path("history", destination["lat"], destination["lon"])
+        cached = load_cache(path, 30 * 24 * 3600)
+        if cached is not None:
+            results[destination["name"]] = cached
+        else:
+            missing.append(destination)
+
+    if not missing:
+        return results
+
+    end_year = date.today().year - 1
+    start_year = end_year - (_HISTORY_YEARS - 1)
+    params = urllib.parse.urlencode({
+        "latitude": ",".join(str(item["lat"]) for item in missing),
+        "longitude": ",".join(str(item["lon"]) for item in missing),
+        "start_date": f"{start_year}-01-01",
+        "end_date": f"{end_year}-12-31",
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "temperature_unit": "fahrenheit",
+        "precipitation_unit": "inch",
+        "timezone": "UTC",
+        "models": "era5_land",
+    })
+    raw = fetch_json(f"{ARCHIVE_URL}?{params}", timeout=240)
+    payloads = raw if isinstance(raw, list) else [raw]
+
+    if len(payloads) != len(missing):
+        raise RuntimeError("Historical weather batch returned an unexpected result count.")
+
+    for destination, payload in zip(missing, payloads):
+        parsed = _historical_from_api_data(payload)
+        results[destination["name"]] = parsed
+        save_cache(cache_path("history", destination["lat"], destination["lon"]), parsed)
+
+    return results
+
+
+def _seasonal_from_api_data(data: dict[str, Any]) -> dict[str, dict[str, float]]:
+    daily = data.get("daily", {})
+    times = daily.get("time", [])
+    result: dict[str, dict[str, float]] = {}
+
+    for i, day_text in enumerate(times):
+        highs = collect_members(daily, "temperature_2m_max", i)
+        lows = collect_members(daily, "temperature_2m_min", i)
+        precip = collect_members(daily, "precipitation_sum", i)
+        if not highs or not lows:
+            continue
+        result[day_text] = {
+            "high": sum(highs) / len(highs),
+            "low": sum(lows) / len(lows),
+            "significantPrecipProbability": (
+                sum(v >= _PRECIP_THRESHOLD_INCHES for v in precip)
+                / len(precip) * 100
+                if precip else 0.0
+            ),
+        }
+    return result
+
+
+def seasonal_range_batch(
+    destinations: list[dict[str, Any]], start: date, end: date
+) -> dict[str, dict[str, dict[str, float]]]:
+    params = urllib.parse.urlencode({
+        "latitude": ",".join(str(item["lat"]) for item in destinations),
+        "longitude": ",".join(str(item["lon"]) for item in destinations),
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "temperature_unit": "fahrenheit",
+        "precipitation_unit": "inch",
+        "timezone": "UTC",
+        "cell_selection": "nearest",
+        "models": "ecmwf_seasonal_seamless",
+    })
+    raw = fetch_json(f"{SEASONAL_URL}?{params}", timeout=180)
+    payloads = raw if isinstance(raw, list) else [raw]
+
+    if len(payloads) != len(destinations):
+        raise RuntimeError("Seasonal weather batch returned an unexpected result count.")
+
+    return {
+        destination["name"]: _seasonal_from_api_data(payload)
+        for destination, payload in zip(destinations, payloads)
+    }
+
+
 def blend_day(
     historical: dict[str, float], seasonal: dict[str, float] | None
 ) -> dict[str, float]:
@@ -341,9 +497,9 @@ def evaluate_destination(
     trip_days: int,
     weekend_preference: str,
     priority: str,
+    history: dict[str, dict[str, float]],
+    seasonal: dict[str, dict[str, float]],
 ) -> dict[str, Any] | None:
-    history = historical_daily(destination)
-    seasonal = seasonal_range(destination, earliest, latest_return)
     starts = candidate_starts(earliest, latest_return, trip_days, weekend_preference)
     best: dict[str, Any] | None = None
 
@@ -437,9 +593,15 @@ def plan():
         if weekend_preference == "weekdays" and trip_days > 5:
             raise ValueError("Weekdays Only is available only for a five-day trip.")
 
+        destinations = REGIONS[region]
+        histories = historical_daily_batch(destinations)
+        seasonal_data = seasonal_range_batch(
+            destinations, earliest, latest_return
+        )
+
         results = []
         failures = []
-        for destination in REGIONS[region]:
+        for destination in destinations:
             try:
                 result = evaluate_destination(
                     destination,
@@ -448,6 +610,8 @@ def plan():
                     trip_days,
                     weekend_preference,
                     priority,
+                    histories.get(destination["name"], {}),
+                    seasonal_data.get(destination["name"], {}),
                 )
                 if result:
                     results.append(result)

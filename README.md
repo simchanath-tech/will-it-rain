@@ -36,3 +36,11 @@ This launch prototype uses a consistent global ERA5-Land historical baseline thr
 Open-Meteo so that region ranking works worldwide. The next data-engine phase can
 route U.S. destinations to NOAA station observations and add additional official
 regional station sources without changing the user interface.
+
+
+## Version 4.1 reliability update
+
+- Batches all destinations into one historical request and one seasonal request.
+- Retries temporary HTTP 429 responses.
+- Shows readable browser errors when Render returns HTML.
+- Uses a five-minute Gunicorn worker timeout for initial regional calculations.
