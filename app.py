@@ -579,6 +579,7 @@ def plan():
         trip_days = int(payload["tripDays"])
         weekend_preference = str(payload.get("weekendPreference", "any"))
         priority = str(payload.get("priority", "overall"))
+        requested_destination = payload.get("destination")
 
         if region not in REGIONS:
             raise ValueError("Choose a valid region.")
@@ -593,7 +594,26 @@ def plan():
         if weekend_preference == "weekdays" and trip_days > 5:
             raise ValueError("Weekdays Only is available only for a five-day trip.")
 
-        destinations = REGIONS[region]
+        specific_destination = None
+        if requested_destination is not None:
+            if not isinstance(requested_destination, dict):
+                raise ValueError("Choose a valid specific destination.")
+            name = str(requested_destination.get("name", "")).strip()
+            country = str(requested_destination.get("country", "")).strip()
+            latitude = float(requested_destination["latitude"])
+            longitude = float(requested_destination["longitude"])
+            if not name or not country:
+                raise ValueError("Choose a valid specific destination.")
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                raise ValueError("The selected destination has invalid coordinates.")
+            specific_destination = {
+                "name": name,
+                "country": country,
+                "lat": latitude,
+                "lon": longitude,
+            }
+
+        destinations = [specific_destination] if specific_destination else REGIONS[region]
         histories = historical_daily_batch(destinations)
         seasonal_data = seasonal_range_batch(
             destinations, earliest, latest_return
@@ -629,7 +649,10 @@ def plan():
         return jsonify({
             "region": region,
             "recommendations": results[:5],
-            "evaluatedDestinations": len(REGIONS[region]),
+            "evaluatedDestinations": len(destinations),
+            "specificDestination": (
+                specific_destination["name"] if specific_destination else None
+            ),
         })
     except (ValueError, KeyError, TypeError) as exc:
         return jsonify({"error": str(exc)}), 400

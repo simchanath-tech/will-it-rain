@@ -23,6 +23,7 @@ const dailyTitle = $("dailyTitle");
 const dailyCards = $("dailyCards");
 
 let destinationResults = [];
+let selectedDestination = null;
 let markers = [];
 let latestRecommendations = [];
 
@@ -106,13 +107,21 @@ searchDestination.addEventListener("click",async()=>{
     });
     destinationMatches.classList.remove("hidden");
     const p=destinationResults[0];
+    destinationMatches.value="0";
+    selectedDestination=p;
     map.setView([p.latitude,p.longitude],8);
   }catch(error){showError(error.message);}
 });
 
 destinationMatches.addEventListener("change",()=>{
   const p=destinationResults[Number(destinationMatches.value)];
+  selectedDestination=p||null;
   if(p) map.setView([p.latitude,p.longitude],8);
+});
+
+destinationSearch.addEventListener("input",()=>{
+  selectedDestination=null;
+  destinationMatches.classList.add("hidden");
 });
 
 function clearMarkers(){
@@ -174,7 +183,9 @@ function renderResults(data){
     bounds.push([rec.latitude,rec.longitude]);
   });
   if(bounds.length) map.fitBounds(bounds,{padding:[35,35]});
-  resultSummary.textContent=`Evaluated ${data.evaluatedDestinations} destinations in ${data.region}.`;
+  resultSummary.textContent=data.specificDestination
+    ? `Best travel dates found for ${data.specificDestination}.`
+    : `Evaluated ${data.evaluatedDestinations} destinations in ${data.region}.`;
   resultsSection.classList.remove("hidden");
   selectRecommendation(0);
 }
@@ -193,7 +204,13 @@ planButton.addEventListener("click",async()=>{
       latestReturn:latestReturn.value,
       tripDays:Number(tripLength.value),
       weekendPreference:Number(tripLength.value)>=5?weekendPreference.value:"any",
-      priority:priority.value
+      priority:priority.value,
+      destination:selectedDestination?{
+        name:selectedDestination.name,
+        country:selectedDestination.country,
+        latitude:selectedDestination.latitude,
+        longitude:selectedDestination.longitude
+      }:null
     };
     const data=await getJson("/api/plan",{
       method:"POST",

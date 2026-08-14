@@ -3,6 +3,7 @@
 Features:
 - Broad region selection
 - Top five destination recommendations
+- Optional city search that calculates the best dates for one specific destination
 - Earliest departure and latest return
 - Trip-length dropdown
 - Weekend, extended-weekend, and long-weekend options
