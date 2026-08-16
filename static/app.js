@@ -46,6 +46,38 @@ latestReturn.min = iso(today);
 const maxDate = new Date(today); maxDate.setDate(maxDate.getDate()+210);
 earliestDate.max = iso(maxDate); latestReturn.max = iso(maxDate);
 
+const calendarOptions={
+  altInput:true,
+  altFormat:"m/d/Y",
+  dateFormat:"Y-m-d",
+  minDate:iso(today),
+  maxDate:iso(maxDate),
+  disableMobile:true,
+  monthSelectorType:"static",
+  prevArrow:'<span aria-hidden="true">&#8592;</span>',
+  nextArrow:'<span aria-hidden="true">&#8594;</span>'
+};
+let latestCalendar=null;
+let earliestCalendar=null;
+if(typeof flatpickr==="function"){
+  latestCalendar=flatpickr(latestReturn,{
+    ...calendarOptions,
+    defaultDate:latestReturn.value,
+    minDate:earliestDate.value
+  });
+  earliestCalendar=flatpickr(earliestDate,{
+    ...calendarOptions,
+    defaultDate:earliestDate.value,
+    onChange:([selectedDate])=>{
+      if(!selectedDate) return;
+      latestCalendar.set("minDate",selectedDate);
+      if(latestCalendar.selectedDates[0]<selectedDate){
+        latestCalendar.setDate(selectedDate,true);
+      }
+    }
+  });
+}
+
 function clearError(){errorBox.classList.add("hidden");}
 function showError(message){errorBox.textContent=message;errorBox.classList.remove("hidden");}
 function tripSelection(){
