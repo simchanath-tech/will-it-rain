@@ -6,6 +6,7 @@ Features:
 - Optional city search that calculates the best dates for one specific destination
 - Earliest departure and latest return
 - Trip-length dropdown
+- Flexible trip durations from 3 through 30 days
 - Weekend, extended-weekend, and long-weekend options
 - Weekend preference for trips of five days or more
 - Interactive Leaflet/OpenStreetMap map
@@ -33,7 +34,7 @@ In GitHub Desktop:
 
 ## Important prototype limitation
 
-This launch prototype uses a consistent global ERA5-Land historical baseline through
+This launch prototype uses a consistent global ERA5 historical baseline through
 Open-Meteo so that region ranking works worldwide. The next data-engine phase can
 route U.S. destinations to NOAA station observations and add additional official
 regional station sources without changing the user interface.

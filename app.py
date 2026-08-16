@@ -22,6 +22,8 @@ _MODEL_WEIGHT = 0.30
 _PRECIP_THRESHOLD_INCHES = 0.10
 _MAX_FORECAST_DAYS = 210
 _HISTORY_YEARS = 25
+_HISTORY_MODEL = "era5"
+_HISTORY_CACHE_PREFIX = "history_era5_v1"
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 SEASONAL_URL = "https://seasonal-api.open-meteo.com/v1/seasonal"
@@ -158,7 +160,9 @@ def load_cache(path: Path, max_age_seconds: int) -> Any | None:
     if time.time() - path.stat().st_mtime > max_age_seconds:
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # Never preserve an empty or damaged weather result for another month.
+        return data if isinstance(data, dict) and data else None
     except Exception:
         return None
 
@@ -166,7 +170,7 @@ def save_cache(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 def historical_daily(destination: dict[str, Any]) -> dict[str, dict[str, float]]:
-    path = cache_path("history", destination["lat"], destination["lon"])
+    path = cache_path(_HISTORY_CACHE_PREFIX, destination["lat"], destination["lon"])
     cached = load_cache(path, 30 * 24 * 3600)
     if cached is not None:
         return cached
@@ -182,7 +186,7 @@ def historical_daily(destination: dict[str, Any]) -> dict[str, dict[str, float]]
         "temperature_unit": "fahrenheit",
         "precipitation_unit": "inch",
         "timezone": "UTC",
-        "models": "era5_land",
+        "models": _HISTORY_MODEL,
     })
     data = fetch_json(f"{ARCHIVE_URL}?{params}")
     daily = data.get("daily", {})
@@ -321,7 +325,9 @@ def historical_daily_batch(
     missing: list[dict[str, Any]] = []
 
     for destination in destinations:
-        path = cache_path("history", destination["lat"], destination["lon"])
+        path = cache_path(
+            _HISTORY_CACHE_PREFIX, destination["lat"], destination["lon"]
+        )
         cached = load_cache(path, 30 * 24 * 3600)
         if cached is not None:
             results[destination["name"]] = cached
@@ -342,7 +348,7 @@ def historical_daily_batch(
         "temperature_unit": "fahrenheit",
         "precipitation_unit": "inch",
         "timezone": "UTC",
-        "models": "era5_land",
+        "models": _HISTORY_MODEL,
     })
     raw = fetch_json(f"{ARCHIVE_URL}?{params}", timeout=240)
     payloads = raw if isinstance(raw, list) else [raw]
@@ -353,7 +359,10 @@ def historical_daily_batch(
     for destination, payload in zip(missing, payloads):
         parsed = _historical_from_api_data(payload)
         results[destination["name"]] = parsed
-        save_cache(cache_path("history", destination["lat"], destination["lon"]), parsed)
+        save_cache(
+            cache_path(_HISTORY_CACHE_PREFIX, destination["lat"], destination["lon"]),
+            parsed,
+        )
 
     return results
 
@@ -434,6 +443,7 @@ def candidate_starts(
     latest_return: date,
     trip_days: int,
     weekend_preference: str,
+    trip_mode: str = "flexible",
 ) -> list[date]:
     last_start = latest_return - timedelta(days=trip_days - 1)
     if last_start < earliest:
@@ -442,7 +452,11 @@ def candidate_starts(
     current = earliest
     while current <= last_start:
         allowed = True
-        if weekend_preference == "include":
+        if trip_mode == "weekend":
+            allowed = current.weekday() == 5
+        elif trip_mode in {"extended_weekend", "long_weekend"}:
+            allowed = current.weekday() == 4
+        elif weekend_preference == "include":
             allowed = includes_full_weekend(current, trip_days)
         elif weekend_preference == "weekdays":
             allowed = weekdays_only(current, trip_days)
@@ -499,8 +513,11 @@ def evaluate_destination(
     priority: str,
     history: dict[str, dict[str, float]],
     seasonal: dict[str, dict[str, float]],
+    trip_mode: str = "flexible",
 ) -> dict[str, Any] | None:
-    starts = candidate_starts(earliest, latest_return, trip_days, weekend_preference)
+    starts = candidate_starts(
+        earliest, latest_return, trip_days, weekend_preference, trip_mode
+    )
     best: dict[str, Any] | None = None
 
     for start in starts:
@@ -578,6 +595,7 @@ def plan():
         latest_return = date.fromisoformat(payload["latestReturn"])
         trip_days = int(payload["tripDays"])
         weekend_preference = str(payload.get("weekendPreference", "any"))
+        trip_mode = str(payload.get("tripMode", "flexible"))
         priority = str(payload.get("priority", "overall"))
         requested_destination = payload.get("destination")
 
@@ -591,6 +609,17 @@ def plan():
             raise ValueError("The latest return must be within approximately seven months.")
         if trip_days < 2 or trip_days > 30:
             raise ValueError("Trip length must be between 2 and 30 days.")
+        allowed_trip_modes = {
+            "flexible": None,
+            "weekend": 2,
+            "extended_weekend": 3,
+            "long_weekend": 4,
+        }
+        if trip_mode not in allowed_trip_modes:
+            raise ValueError("Choose a valid trip type.")
+        required_days = allowed_trip_modes[trip_mode]
+        if required_days is not None and trip_days != required_days:
+            raise ValueError("The selected trip type and duration do not match.")
         if weekend_preference == "weekdays" and trip_days > 5:
             raise ValueError("Weekdays Only is available only for a five-day trip.")
 
@@ -614,10 +643,23 @@ def plan():
             }
 
         destinations = [specific_destination] if specific_destination else REGIONS[region]
-        histories = historical_daily_batch(destinations)
-        seasonal_data = seasonal_range_batch(
-            destinations, earliest, latest_return
-        )
+        if specific_destination:
+            # A geocoded city is a one-off location, not a regional batch. Using
+            # the single-location endpoints also avoids response-shape differences
+            # that can leave an otherwise valid city with an empty history.
+            histories = {
+                specific_destination["name"]: historical_daily(specific_destination)
+            }
+            seasonal_data = {
+                specific_destination["name"]: seasonal_range(
+                    specific_destination, earliest, latest_return
+                )
+            }
+        else:
+            histories = historical_daily_batch(destinations)
+            seasonal_data = seasonal_range_batch(
+                destinations, earliest, latest_return
+            )
 
         results = []
         failures = []
@@ -632,6 +674,7 @@ def plan():
                     priority,
                     histories.get(destination["name"], {}),
                     seasonal_data.get(destination["name"], {}),
+                    trip_mode,
                 )
                 if result:
                     results.append(result)

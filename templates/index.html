@@ -53,9 +53,9 @@
     <div class="field">
       <label for="tripLength">Trip length</label>
       <select id="tripLength">
-        <option value="2">Weekend (Sat–Sun)</option>
-        <option value="3">Extended Weekend (Fri–Sun)</option>
-        <option value="4">Long Weekend (Fri–Mon)</option>
+        <option value="weekend">Weekend (Sat–Sun)</option>
+        <option value="extended_weekend">Extended Weekend (Fri–Sun)</option>
+        <option value="long_weekend">Long Weekend (Fri–Mon)</option>
         {% for days in range(3, 31) %}
         <option value="{{ days }}" {% if days == 7 %}selected{% endif %}>{{ days }} days</option>
         {% endfor %}

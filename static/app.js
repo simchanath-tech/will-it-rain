@@ -48,6 +48,14 @@ earliestDate.max = iso(maxDate); latestReturn.max = iso(maxDate);
 
 function clearError(){errorBox.classList.add("hidden");}
 function showError(message){errorBox.textContent=message;errorBox.classList.remove("hidden");}
+function tripSelection(){
+  const special={
+    weekend:{days:2,mode:"weekend"},
+    extended_weekend:{days:3,mode:"extended_weekend"},
+    long_weekend:{days:4,mode:"long_weekend"}
+  };
+  return special[tripLength.value]||{days:Number(tripLength.value),mode:"flexible"};
+}
 async function getJson(url, options){
   const response=await fetch(url, options);
   const contentType=response.headers.get("content-type") || "";
@@ -74,13 +82,13 @@ async function getJson(url, options){
 }
 
 function updateWeekendControl(){
-  const days=Number(tripLength.value);
-  if(days>=5){
+  const trip=tripSelection();
+  if(trip.mode==="flexible" && trip.days>=5){
     weekendField.classList.remove("hidden");
     const weekdaysOption=[...weekendPreference.options].find(o=>o.value==="weekdays");
-    weekdaysOption.disabled=days>5;
-    if(days>5 && weekendPreference.value==="weekdays") weekendPreference.value="include";
-    weekendNote.textContent=days>5
+    weekdaysOption.disabled=trip.days>5;
+    if(trip.days>5 && weekendPreference.value==="weekdays") weekendPreference.value="include";
+    weekendNote.textContent=trip.days>5
       ? "Weekdays Only is unavailable because a continuous trip longer than five days must include a weekend."
       : "Choose whether the five-day trip should include a weekend.";
   }else{
@@ -198,12 +206,14 @@ planButton.addEventListener("click",async()=>{
   loading.textContent="Evaluating destinations and every eligible travel window. The first search may take a few minutes while historical data are cached.";
   loading.classList.remove("hidden");
   try{
+    const trip=tripSelection();
     const body={
       region:region.value,
       earliestDate:earliestDate.value,
       latestReturn:latestReturn.value,
-      tripDays:Number(tripLength.value),
-      weekendPreference:Number(tripLength.value)>=5?weekendPreference.value:"any",
+      tripDays:trip.days,
+      tripMode:trip.mode,
+      weekendPreference:trip.mode==="flexible" && trip.days>=5?weekendPreference.value:"any",
       priority:priority.value,
       destination:selectedDestination?{
         name:selectedDestination.name,
